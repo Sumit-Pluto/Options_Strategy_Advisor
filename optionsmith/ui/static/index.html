@@ -1,0 +1,315 @@
+<title>OptionSmith — Option Strategy Advisor</title>
+<style>
+  :root{color-scheme:dark;
+    --bg:#14161a; --panel:#1b1e24; --panel2:#22262e; --line:#2c313a;
+    --ink:#e8eaed; --ink2:#9aa0a6; --ink3:#6b7280;
+    --blue:#3987e5; --good:#4caf50; --bad:#e66767; --warn:#c98500; --violet:#9085e9;}
+  @media (prefers-color-scheme: light){:root:not([data-theme="dark"]){color-scheme:light;
+    --bg:#fcfcfb; --panel:#ffffff; --panel2:#f1f0ee; --line:#dddbd6;
+    --ink:#0b0b0b; --ink2:#52514e; --ink3:#8a887f;
+    --blue:#2a78d6; --good:#008300; --bad:#e34948; --warn:#eda100; --violet:#4a3aa7;}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  header{display:flex;align-items:center;gap:16px;padding:12px 20px;
+    border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
+  .brand{font-weight:700;letter-spacing:.5px}
+  .brand span{color:var(--blue)}
+  .grow{flex:1}
+  main{display:grid;grid-template-columns:320px 1fr;gap:16px;padding:16px;align-items:start}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px}
+  .card h3{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink2)}
+  label{display:block;font-size:12px;color:var(--ink2);margin:8px 0 3px}
+  input,select,button{font:inherit;background:var(--panel2);color:var(--ink);
+    border:1px solid var(--line);border-radius:7px;padding:7px 9px;width:100%}
+  button{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:600;cursor:pointer}
+  button:hover{filter:brightness(1.08)} button.ghost{background:var(--panel2);color:var(--ink);border-color:var(--line);font-weight:500}
+  .row{display:flex;gap:8px} .row>*{flex:1}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{text-align:left;color:var(--ink2);font-weight:600;border-bottom:1px solid var(--line);padding:5px 7px;white-space:nowrap}
+  td{padding:5px 7px;border-bottom:1px solid var(--line);white-space:nowrap}
+  tr:hover td{background:color-mix(in oklab,var(--blue) 9%,transparent)}
+  .pos{color:var(--good)} .neg{color:var(--bad)} .mut{color:var(--ink3)}
+  .chip{display:inline-block;padding:1px 7px;border-radius:5px;font-size:11px;font-weight:600}
+  .c-gen{background:color-mix(in oklab,var(--violet) 20%,transparent);color:var(--violet)}
+  .c-lib{background:color-mix(in oklab,var(--blue) 16%,transparent);color:var(--blue)}
+  .c-cred{background:color-mix(in oklab,var(--good) 16%,transparent);color:var(--good)}
+  .c-debi{background:color-mix(in oklab,var(--warn) 18%,transparent);color:var(--warn)}
+  .kpis{display:flex;gap:10px;flex-wrap:wrap}
+  .kpi{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 12px;min-width:104px}
+  .kpi .k{font-size:11px;color:var(--ink2)} .kpi .v{font-size:17px;font-weight:650;margin-top:2px}
+  .strat{border:1px solid var(--line);border-radius:9px;margin-bottom:10px;overflow:hidden}
+  .strat .hd{display:flex;align-items:center;gap:9px;padding:9px 12px;background:var(--panel2);cursor:pointer}
+  .strat .hd b{flex:1} .strat .bd{padding:11px 12px;display:none;border-top:1px solid var(--line)}
+  .strat.open .bd{display:block}
+  .legs{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--ink2);margin:5px 0 9px}
+  .warn{background:color-mix(in oklab,var(--warn) 12%,transparent);border-left:3px solid var(--warn);
+    padding:8px 11px;border-radius:5px;font-size:12.5px;margin-top:7px}
+  .reason{font-size:12.5px;color:var(--ink2);margin:3px 0;padding-left:12px;position:relative}
+  .reason::before{content:"›";position:absolute;left:0;color:var(--blue)}
+  svg text{fill:var(--ink2);font-size:10px}
+  .tip{position:fixed;pointer-events:none;display:none;background:var(--panel2);
+    border:1px solid var(--line);border-radius:6px;padding:6px 9px;font-size:12px;z-index:9}
+  .tabs{display:flex;gap:4px;margin-bottom:10px}
+  .tab{padding:5px 11px;border-radius:6px;cursor:pointer;font-size:13px;color:var(--ink2)}
+  .tab.on{background:var(--panel2);color:var(--ink);font-weight:600}
+</style>
+
+<header>
+  <div class="brand">OPTION<span>SMITH</span></div>
+  <div class="mut" id="ctxline">—</div>
+  <div class="grow"></div>
+  <button class="ghost" style="width:auto" onclick="toggleTheme()">◐</button>
+</header>
+
+<main>
+ <div>
+  <div class="card">
+    <h3>Chain</h3>
+    <label>Symbol</label><input id="symbol" value="RELIANCE">
+    <div class="row">
+      <div><label>Spot</label><input id="spot" type="number" value="1400" step="1"></div>
+      <div><label>Lot size</label><input id="lot" type="number" value="250"></div>
+    </div>
+    <div class="row">
+      <div><label>Days to expiry</label><input id="dte" type="number" value="30"></div>
+      <div><label>Base IV %</label><input id="iv" type="number" value="28" step="0.5"></div>
+    </div>
+    <label>Chain JSON file (optional — else synthetic)</label>
+    <input type="file" id="file" accept=".json">
+  </div>
+
+  <div class="card">
+    <h3>Your view</h3>
+    <label>Direction</label>
+    <select id="view">
+      <option value="">infer from chain</option>
+      <option>bullish</option><option>bearish</option><option>neutral</option>
+    </select>
+    <label>Target move % (optional)</label>
+    <input id="move" type="number" step="0.5" placeholder="e.g. 3 or -2.5">
+    <label>ATM IV percentile vs own history</label>
+    <input id="ivpct" type="number" min="0" max="100" placeholder="e.g. 85 = rich">
+    <div class="row" style="margin-top:6px">
+      <div><label>Max loss ₹</label><input id="maxloss" type="number" value="25000"></div>
+      <div><label>Max legs</label><input id="maxlegs" type="number" value="4" min="1" max="4"></div>
+    </div>
+    <button style="margin-top:12px" onclick="run()">Analyse</button>
+  </div>
+
+  <div class="card">
+    <h3>Price one strategy</h3>
+    <select id="catalogue"></select>
+    <button class="ghost" style="margin-top:8px" onclick="buildOne()">Price it</button>
+    <div id="caveat" class="mut" style="font-size:12px;margin-top:8px"></div>
+  </div>
+ </div>
+
+ <div>
+  <div class="card" id="viewcard" style="display:none">
+    <h3>Read of the chain</h3>
+    <div class="kpis" id="kpis"></div>
+    <div style="margin-top:12px" id="reasons"></div>
+    <div id="warns"></div>
+  </div>
+
+  <div class="card">
+    <div class="tabs">
+      <div class="tab on" data-t="recs" onclick="tab('recs')">Recommendations</div>
+      <div class="tab" data-t="menu" onclick="tab('menu')">Classic menu</div>
+      <div class="tab" data-t="chain" onclick="tab('chain')">Chain</div>
+    </div>
+    <div id="recs"><div class="mut">Set your view and press Analyse.</div></div>
+    <div id="menu" style="display:none"></div>
+    <div id="chain" style="display:none"></div>
+  </div>
+ </div>
+</main>
+<div class="tip" id="tip"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let CHAIN = null, REPORT = null;
+
+function toggleTheme(){
+  const r = document.documentElement;
+  r.dataset.theme = r.dataset.theme === 'dark' ? 'light' : 'dark';
+  localStorage.optionsmithTheme = r.dataset.theme;
+}
+if (localStorage.optionsmithTheme) document.documentElement.dataset.theme = localStorage.optionsmithTheme;
+
+$('#file').addEventListener('change', e => {
+  const f = e.target.files[0]; if(!f) return;
+  const rd = new FileReader();
+  rd.onload = () => { try { CHAIN = JSON.parse(rd.result);
+      $('#symbol').value = CHAIN.symbol || 'CHAIN'; $('#spot').value = CHAIN.spot;
+      $('#lot').value = CHAIN.lot_size || 1; toast('chain loaded: '+(CHAIN.quotes||[]).length+' contracts');
+    } catch(err){ toast('bad JSON: '+err.message); } };
+  rd.readAsText(f);
+});
+
+const money = x => x===null||x===undefined ? '—'
+  : (x<0?'−₹':'₹') + Math.abs(Math.round(x)).toLocaleString('en-IN');
+
+function spec(){
+  return {chain: CHAIN, symbol: $('#symbol').value, spot: +$('#spot').value,
+          dte: +$('#dte').value, lot_size: +$('#lot').value, base_iv: (+$('#iv').value)/100};
+}
+async function post(url, body){
+  const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
+                             body: JSON.stringify(body)});
+  if(!r.ok){ const e = await r.json().catch(()=>({detail:r.statusText})); throw new Error(e.detail); }
+  return r.json();
+}
+function toast(m){ const t=$('#tip'); t.textContent=m; t.style.display='block';
+  t.style.left='50%'; t.style.top='14px'; t.style.transform='translateX(-50%)';
+  setTimeout(()=>t.style.display='none', 2600); }
+
+async function run(){
+  try{
+    const b = {...spec(), view: $('#view').value || null,
+      move: $('#move').value===''?null:+$('#move').value,
+      iv_percentile: $('#ivpct').value===''?null:+$('#ivpct').value,
+      max_loss: +$('#maxloss').value, max_legs: +$('#maxlegs').value, top_n: 6};
+    REPORT = await post('/api/advise', b);
+    renderAll();
+  }catch(e){ toast('error: '+e.message); }
+}
+
+function renderAll(){
+  const R = REPORT, m = R.metrics, v = R.view;
+  $('#ctxline').textContent = `${R.symbol} · spot ${R.spot.toLocaleString('en-IN')} · exp ${R.expiry} (${R.dte}d) · lot ${R.lot_size}`;
+  $('#viewcard').style.display = 'block';
+  const dirColor = v.direction==='bullish'?'pos':v.direction==='bearish'?'neg':'mut';
+  $('#kpis').innerHTML = [
+    ['View', `<span class="${dirColor}">${v.direction}</span>`],
+    ['Volatility', v.volatility.replace('iv_','IV ')],
+    ['Range', v.range_conviction],
+    ['Call wall', m.call_wall ?? '—'], ['Put wall', m.put_wall ?? '—'],
+    ['Max pain', m.max_pain ?? '—'], ['PCR(OI)', m.pcr_oi],
+    ['ATM IV', (m.atm_iv_pct ?? '—')+'%'], ['25Δ skew', (m.iv_skew_25d_pts ?? '—')+' pts'],
+  ].map(([k,val])=>`<div class="kpi"><div class="k">${k}</div><div class="v">${val}</div></div>`).join('');
+  $('#reasons').innerHTML = v.reasons.map(r=>`<div class="reason">${esc(r)}</div>`).join('');
+  $('#warns').innerHTML = (R.warnings||[]).map(w=>`<div class="warn">⚠ ${esc(w)}</div>`).join('');
+  $('#recs').innerHTML = R.recommendations.length
+    ? R.recommendations.map((s,i)=>card(s,i)).join('') : '<div class="mut">No structure passed the risk gates — widen max loss.</div>';
+  $('#menu').innerHTML = R.classic_menu.length
+    ? menuTable(R.classic_menu) : '<div class="mut">No classic matched this view.</div>';
+  $('#chain').innerHTML = chainTable(R.chain_preview);
+  R.recommendations.forEach((s,i)=>drawCurve('sv'+i, s));
+}
+
+const esc = s => String(s).replace(/[<>&]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+
+function legStr(s){
+  return s.legs.map(l=>`${l.action} ${l.strike} ${l.right}${l.qty>1?'×'+l.qty:''} @ ${l.price}`).join('   ');
+}
+function card(s,i){
+  const src = s.source==='generated' ? '<span class="chip c-gen">GENERATED</span>'
+                                     : '<span class="chip c-lib">CLASSIC</span>';
+  const cd = s.credit_or_debit==='CREDIT' ? '<span class="chip c-cred">CREDIT</span>'
+                                          : '<span class="chip c-debi">DEBIT</span>';
+  const g = s.greeks||{};
+  return `<div class="strat ${i===0?'open':''}">
+    <div class="hd" onclick="this.parentNode.classList.toggle('open')">
+      <b>${i+1}. ${esc(s.name)}</b> ${src} ${cd}
+      <span class="mut">POP ${s.pop_pct}%</span>
+      <span class="${s.expected_value>=0?'pos':'neg'}">EV ${money(s.expected_value)}</span>
+    </div>
+    <div class="bd">
+      <div class="legs">${esc(legStr(s))}</div>
+      <div class="kpis">
+        <div class="kpi"><div class="k">Max profit</div><div class="v pos">${money(s.max_profit)}</div></div>
+        <div class="kpi"><div class="k">Max loss</div><div class="v neg">${money(s.max_loss)}</div></div>
+        <div class="kpi"><div class="k">Net</div><div class="v">${money(Math.abs(s.net_premium_per_lot))}</div></div>
+        <div class="kpi"><div class="k">Breakevens</div><div class="v" style="font-size:14px">${s.breakevens.join(' / ')||'—'}</div></div>
+        <div class="kpi"><div class="k">POP</div><div class="v">${s.pop_pct}%<span class="mut" style="font-size:11px"> vs ${s.pop_classic_pct}% textbook</span></div></div>
+        <div class="kpi"><div class="k">Margin ~</div><div class="v">${money(s.margin_estimate)}</div></div>
+      </div>
+      <svg id="sv${i}" width="100%" height="190" style="margin-top:12px"></svg>
+      <div class="mut" style="font-size:12px;margin-top:6px">
+        Δ ${(g.delta||0).toFixed(1)} · Γ ${(g.gamma||0).toFixed(3)} · vega ${(g.vega||0).toFixed(1)}/pt · θ ${(g.theta||0).toFixed(1)}/day
+      </div>
+      ${s.rationale?`<div class="mut" style="font-size:12.5px;margin-top:6px">${esc(s.rationale)}</div>`:''}
+    </div></div>`;
+}
+
+function menuTable(rows){
+  return `<table><tr><th>strategy</th><th>legs</th><th>net</th><th>max P</th><th>max L</th><th>POP</th><th>EV</th></tr>` +
+    rows.map(s=>`<tr><td><b>${esc(s.name)}</b></td>
+      <td class="mut">${s.legs.map(l=>(l.action==='BUY'?'+':'−')+l.strike+l.right).join(' ')}</td>
+      <td class="${s.credit_or_debit==='CREDIT'?'pos':''}">${s.credit_or_debit[0]}${money(Math.abs(s.net_premium_per_lot))}</td>
+      <td class="pos">${money(s.max_profit)}</td><td class="neg">${money(s.max_loss)}</td>
+      <td>${s.pop_pct}%</td><td class="${s.expected_value>=0?'pos':'neg'}">${money(s.expected_value)}</td></tr>`).join('') + `</table>`;
+}
+
+function chainTable(p){
+  if(!p) return '';
+  return `<div class="mut" style="margin-bottom:8px">${p.symbol} · ${p.source} · ATM ${p.atm}</div>
+    <table><tr><th>CE OI</th><th>CE IV</th><th>CE ₹</th><th>STRIKE</th><th>PE ₹</th><th>PE IV</th><th>PE OI</th></tr>` +
+    p.rows.map(r=>`<tr${Math.abs(r.strike-p.atm)<1e-6?' style="background:color-mix(in oklab,var(--blue) 12%,transparent)"':''}>
+      <td>${(r.ce_oi??'—').toLocaleString?.('en-IN')??'—'}</td><td class="mut">${r.ce_iv??'—'}</td><td>${r.ce_ltp??'—'}</td>
+      <td><b>${r.strike}</b></td>
+      <td>${r.pe_ltp??'—'}</td><td class="mut">${r.pe_iv??'—'}</td><td>${(r.pe_oi??'—').toLocaleString?.('en-IN')??'—'}</td></tr>`).join('') + `</table>`;
+}
+
+function drawCurve(id, s){
+  const svg = document.getElementById(id); if(!svg) return;
+  const curve = s.curve || buildCurve(s);
+  const W = svg.clientWidth || 640, H = 190, P = {l:58,r:14,t:12,b:22};
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const xs = curve.x, ys = curve.y;
+  const xmin=Math.min(...xs), xmax=Math.max(...xs);
+  const ymin=Math.min(...ys,0), ymax=Math.max(...ys,0), pad=(ymax-ymin)*0.12||1;
+  const X = v => P.l + (v-xmin)/(xmax-xmin)*(W-P.l-P.r);
+  const Y = v => P.t + (1-(v-(ymin-pad))/((ymax+pad)-(ymin-pad)))*(H-P.t-P.b);
+  let g = '';
+  // zero line
+  g += `<line x1="${P.l}" x2="${W-P.r}" y1="${Y(0)}" y2="${Y(0)}" stroke="var(--line)" stroke-width="1"/>`;
+  // profit / loss regions
+  let dPos = '', dNeg = '';
+  ys.forEach((y,i)=>{ const cmd = i?'L':'M'; (y>=0?(dPos+=`${cmd}${X(xs[i])},${Y(y)}`):(dNeg+=`${cmd}${X(xs[i])},${Y(y)}`)); });
+  g += `<path d="M${X(xs[0])},${Y(ys[0])}${ys.map((y,i)=>`L${X(xs[i])},${Y(y)}`).join('')}" fill="none" stroke="var(--blue)" stroke-width="2"/>`;
+  // spot marker + strikes
+  g += `<line x1="${X(curve.spot)}" x2="${X(curve.spot)}" y1="${P.t}" y2="${H-P.b}" stroke="var(--ink3)" stroke-dasharray="3 3"/>`;
+  g += `<text x="${X(curve.spot)+3}" y="${P.t+10}">spot</text>`;
+  (curve.strikes||[]).forEach(k=>{ if(k>=xmin&&k<=xmax)
+    g += `<line x1="${X(k)}" x2="${X(k)}" y1="${H-P.b-4}" y2="${H-P.b}" stroke="var(--ink3)"/>`; });
+  // y labels
+  [ymax, 0, ymin].forEach(v=>{ g += `<text x="${P.l-6}" y="${Y(v)+3}" text-anchor="end">${Math.round(v).toLocaleString('en-IN')}</text>`; });
+  g += `<text x="${P.l}" y="${H-6}">${Math.round(xmin)}</text><text x="${W-P.r}" y="${H-6}" text-anchor="end">${Math.round(xmax)}</text>`;
+  svg.innerHTML = g;
+  svg.onmousemove = e => { const r=svg.getBoundingClientRect();
+    const fx=(e.clientX-r.left)*(W/r.width);
+    const i=Math.max(0,Math.min(xs.length-1, Math.round((fx-P.l)/(W-P.l-P.r)*(xs.length-1))));
+    const t=$('#tip'); t.style.display='block'; t.style.transform='none';
+    t.style.left=(e.clientX+13)+'px'; t.style.top=(e.clientY+10)+'px';
+    t.innerHTML = `at <b>${xs[i].toLocaleString('en-IN')}</b><br>P&L ${money(ys[i])}`; };
+  svg.onmouseleave = () => $('#tip').style.display='none';
+}
+
+async function buildCurveFor(s){ return s; }
+function buildCurve(s){ return {x:[0,1], y:[0,0], spot:0, strikes:[]}; }
+
+async function buildOne(){
+  try{
+    const d = await post('/api/build', {...spec(), key: $('#catalogue').value});
+    $('#recs').innerHTML = card(d, 0);
+    drawCurve('sv0', d);
+    tab('recs');
+  }catch(e){ toast('error: '+e.message); }
+}
+
+function tab(t){
+  ['recs','menu','chain'].forEach(x=>{ $('#'+x).style.display = x===t?'block':'none';
+    document.querySelector(`.tab[data-t="${x}"]`).classList.toggle('on', x===t); });
+}
+
+fetch('/api/catalogue').then(r=>r.json()).then(rows=>{
+  $('#catalogue').innerHTML = rows.map(r=>`<option value="${r.key}">${r.name}</option>`).join('');
+  const caveats = Object.fromEntries(rows.map(r=>[r.key, r.caveat]));
+  $('#catalogue').onchange = e => $('#caveat').textContent = caveats[e.target.value] || '';
+  $('#catalogue').onchange({target:$('#catalogue')});
+});
+run();
+</script>

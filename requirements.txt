@@ -1,0 +1,8 @@
+# The advisor's core (payoff maths, greeks, POP, the strategy library and the
+# generator) needs nothing but the standard library — `python -m optionsmith
+# demo` runs on a bare interpreter. Everything below is for the two optional
+# surfaces: the dashboard, and live data from the Gateway.
+
+fastapi>=0.110          # dashboard
+uvicorn>=0.27           # dashboard
+requests>=2.31          # Gateway REST client (and the legacy Dhan loader)
