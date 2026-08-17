@@ -53,6 +53,15 @@
   .tabs{display:flex;gap:4px;margin-bottom:10px}
   .tab{padding:5px 11px;border-radius:6px;cursor:pointer;font-size:13px;color:var(--ink2)}
   .tab.on{background:var(--panel2);color:var(--ink);font-weight:600}
+  .srcs{display:flex;gap:4px;margin-bottom:8px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:7px;padding:3px}
+  .src{flex:1;text-align:center;padding:5px 0;border-radius:5px;cursor:pointer;
+    font-size:12.5px;color:var(--ink2)}
+  .src.on{background:var(--panel);color:var(--ink);font-weight:600}
+  .gw{font-size:12px;margin:8px 0 2px;padding:6px 9px;border-radius:6px;
+    background:var(--panel2);border-left:3px solid var(--ink3)}
+  .gw.ok{border-left-color:var(--good)} .gw.bad{border-left-color:var(--bad)}
+  .busy{opacity:.55;pointer-events:none}
 </style>
 
 <header>
@@ -66,17 +75,41 @@
  <div>
   <div class="card">
     <h3>Chain</h3>
+    <div class="srcs">
+      <div class="src"    data-s="live"  onclick="setSource('live')">Live</div>
+      <div class="src on" data-s="synth" onclick="setSource('synth')">Synthetic</div>
+      <div class="src"    data-s="file"  onclick="setSource('file')">File</div>
+    </div>
+
     <label>Symbol</label><input id="symbol" value="RELIANCE">
-    <div class="row">
-      <div><label>Spot</label><input id="spot" type="number" value="1400" step="1"></div>
-      <div><label>Lot size</label><input id="lot" type="number" value="250"></div>
+
+    <div id="livebox">
+      <div id="gwstate" class="gw mut">checking gateway…</div>
+      <div class="row">
+        <div><label>Exchange</label>
+          <select id="exchange"><option>NSE</option><option>BSE</option><option>MCX</option></select></div>
+        <div><label>Strikes ± ATM</label><input id="strikes" type="number" value="15" min="1" max="40"></div>
+      </div>
+      <label>Expiry</label>
+      <select id="expiry"><option value="">nearest</option></select>
+      <button class="ghost" style="margin-top:8px" onclick="loadExpiries()">Load expiries</button>
     </div>
-    <div class="row">
-      <div><label>Days to expiry</label><input id="dte" type="number" value="30"></div>
-      <div><label>Base IV %</label><input id="iv" type="number" value="28" step="0.5"></div>
+
+    <div id="synthbox" style="display:none">
+      <div class="row">
+        <div><label>Spot</label><input id="spot" type="number" value="1400" step="1"></div>
+        <div><label>Lot size</label><input id="lot" type="number" value="250"></div>
+      </div>
+      <div class="row">
+        <div><label>Days to expiry</label><input id="dte" type="number" value="30"></div>
+        <div><label>Base IV %</label><input id="iv" type="number" value="28" step="0.5"></div>
+      </div>
     </div>
-    <label>Chain JSON file (optional — else synthetic)</label>
-    <input type="file" id="file" accept=".json">
+
+    <div id="filebox" style="display:none">
+      <label>Chain JSON file</label>
+      <input type="file" id="file" accept=".json">
+    </div>
   </div>
 
   <div class="card">
@@ -151,9 +184,58 @@ $('#file').addEventListener('change', e => {
 const money = x => x===null||x===undefined ? '—'
   : (x<0?'−₹':'₹') + Math.abs(Math.round(x)).toLocaleString('en-IN');
 
+let SOURCE = 'live';
+
+function setSource(s){
+  SOURCE = s;
+  document.querySelectorAll('.src').forEach(e => e.classList.toggle('on', e.dataset.s === s));
+  $('#livebox').style.display  = s === 'live'  ? '' : 'none';
+  $('#synthbox').style.display = s === 'synth' ? '' : 'none';
+  $('#filebox').style.display  = s === 'file'  ? '' : 'none';
+  // A file chain must not linger once another source is picked, or "Analyse"
+  // silently keeps analysing the old upload — the server prefers `chain` over
+  // everything else.
+  if(s !== 'file') CHAIN = null;
+  if(s === 'live') gatewayStatus();
+}
+
+async function gatewayStatus(){
+  const el = $('#gwstate');
+  el.className = 'gw mut'; el.textContent = 'checking gateway…';
+  try{
+    const r = await (await fetch('/api/gateway/status')).json();
+    if(r.available && r.connected){
+      el.className = 'gw ok'; el.textContent = 'gateway connected — live data available';
+    } else {
+      el.className = 'gw bad';
+      el.textContent = r.reason || 'live data unavailable';
+    }
+  }catch(e){ el.className = 'gw bad'; el.textContent = 'dashboard cannot reach its own API'; }
+}
+
+async function loadExpiries(){
+  const sel = $('#expiry'), sym = $('#symbol').value.trim();
+  if(!sym) return;
+  sel.innerHTML = '<option value="">loading…</option>';
+  try{
+    const q = new URLSearchParams({symbol: sym, exchange: $('#exchange').value});
+    const r = await (await fetch('/api/gateway/expiries?' + q)).json();
+    const rows = r.expiries || [];
+    sel.innerHTML = '<option value="">nearest</option>' +
+      rows.map(e => `<option value="${e.expiry}">${e.expiry}</option>`).join('');
+    toast(rows.length ? `${rows.length} expiries for ${sym}` : `no options listed for ${sym}`);
+  }catch(e){ sel.innerHTML = '<option value="">nearest</option>'; toast('error: '+e.message); }
+}
+
 function spec(){
-  return {chain: CHAIN, symbol: $('#symbol').value, spot: +$('#spot').value,
-          dte: +$('#dte').value, lot_size: +$('#lot').value, base_iv: (+$('#iv').value)/100};
+  const base = {symbol: $('#symbol').value};
+  if(SOURCE === 'live')
+    return {...base, live: true, exchange: $('#exchange').value,
+            expiry: $('#expiry').value, strikes: +$('#strikes').value};
+  if(SOURCE === 'file')
+    return {...base, chain: CHAIN};
+  return {...base, spot: +$('#spot').value, dte: +$('#dte').value,
+          lot_size: +$('#lot').value, base_iv: (+$('#iv').value)/100};
 }
 async function post(url, body){
   const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
@@ -166,6 +248,13 @@ function toast(m){ const t=$('#tip'); t.textContent=m; t.style.display='block';
   setTimeout(()=>t.style.display='none', 2600); }
 
 async function run(){
+  const btn = event?.target?.tagName === 'BUTTON' ? event.target : null;
+  const label = btn?.textContent;
+  // A live chain is one broker round-trip per leg — seconds, not milliseconds.
+  // Without a busy state the page looks dead and gets clicked again, queueing
+  // a second full fetch behind the first.
+  if(btn){ btn.textContent = SOURCE==='live' ? 'Fetching live chain…' : 'Analysing…';
+           btn.classList.add('busy'); }
   try{
     const b = {...spec(), view: $('#view').value || null,
       move: $('#move').value===''?null:+$('#move').value,
@@ -173,7 +262,8 @@ async function run(){
       max_loss: +$('#maxloss').value, max_legs: +$('#maxlegs').value, top_n: 6};
     REPORT = await post('/api/advise', b);
     renderAll();
-  }catch(e){ toast('error: '+e.message); }
+  }catch(e){ toast('error: '+e.message); if(SOURCE==='live') gatewayStatus(); }
+  finally{ if(btn){ btn.textContent = label; btn.classList.remove('busy'); } }
 }
 
 function renderAll(){
@@ -243,14 +333,29 @@ function menuTable(rows){
       <td>${s.pop_pct}%</td><td class="${s.expected_value>=0?'pos':'neg'}">${money(s.expected_value)}</td></tr>`).join('') + `</table>`;
 }
 
+const num = x => (x===null||x===undefined) ? '—' : x.toLocaleString('en-IN');
+// null d_oi means no prior snapshot — "unknown", which must not render as 0%.
+const dOi = x => (x===null||x===undefined) ? '<span class="mut">—</span>'
+  : `<span class="${x>=0?'pos':'neg'}">${x>=0?'+':''}${x.toFixed(0)}%</span>`;
+const book = s => (s && s.bid && s.ask) ? `${s.bid} / ${s.ask}`
+  : '<span class="mut" title="no two-sided book — priced at LTP">—</span>';
+
 function chainTable(p){
   if(!p) return '';
-  return `<div class="mut" style="margin-bottom:8px">${p.symbol} · ${p.source} · ATM ${p.atm}</div>
-    <table><tr><th>CE OI</th><th>CE IV</th><th>CE ₹</th><th>STRIKE</th><th>PE ₹</th><th>PE IV</th><th>PE OI</th></tr>` +
-    p.rows.map(r=>`<tr${Math.abs(r.strike-p.atm)<1e-6?' style="background:color-mix(in oklab,var(--blue) 12%,transparent)"':''}>
-      <td>${(r.ce_oi??'—').toLocaleString?.('en-IN')??'—'}</td><td class="mut">${r.ce_iv??'—'}</td><td>${r.ce_ltp??'—'}</td>
+  const q = p.contracts!==undefined
+    ? ` · ${p.contracts} contracts, ${p.booked} with a book, ${p.liquid} liquid` : '';
+  return `<div class="mut" style="margin-bottom:8px">${p.symbol} · ${p.source} · ATM ${p.atm}${q}</div>
+    <table><tr><th>ΔOI</th><th>CE OI</th><th>CE IV</th><th>CE bid/ask</th><th>CE ₹</th>
+      <th>STRIKE</th><th>PE ₹</th><th>PE bid/ask</th><th>PE IV</th><th>PE OI</th><th>ΔOI</th></tr>` +
+    p.rows.map(r=>{
+      const ce = r.ce||{}, pe = r.pe||{};
+      return `<tr${Math.abs(r.strike-p.atm)<1e-6?' style="background:color-mix(in oklab,var(--blue) 12%,transparent)"':''}>
+      <td>${dOi(ce.d_oi_pct)}</td><td>${num(r.ce_oi)}</td><td class="mut">${r.ce_iv??'—'}</td>
+      <td class="mut">${book(ce)}</td><td>${r.ce_ltp??'—'}</td>
       <td><b>${r.strike}</b></td>
-      <td>${r.pe_ltp??'—'}</td><td class="mut">${r.pe_iv??'—'}</td><td>${(r.pe_oi??'—').toLocaleString?.('en-IN')??'—'}</td></tr>`).join('') + `</table>`;
+      <td>${r.pe_ltp??'—'}</td><td class="mut">${book(pe)}</td>
+      <td class="mut">${r.pe_iv??'—'}</td><td>${num(r.pe_oi)}</td><td>${dOi(pe.d_oi_pct)}</td></tr>`;
+    }).join('') + `</table>`;
 }
 
 function drawCurve(id, s){
@@ -311,5 +416,11 @@ fetch('/api/catalogue').then(r=>r.json()).then(rows=>{
   $('#catalogue').onchange = e => $('#caveat').textContent = caveats[e.target.value] || '';
   $('#catalogue').onchange({target:$('#catalogue')});
 });
+
+// Start on the synthetic chain so the page has something to show immediately —
+// auto-firing a live fetch on load would spend seconds of broker time before
+// the user has picked a symbol.
+setSource('synth');
 run();
+gatewayStatus();
 </script>
