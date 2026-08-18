@@ -76,6 +76,12 @@ def connect() -> sqlite3.Connection:
     p.parent.mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(str(p), timeout=30, check_same_thread=False)
     c.row_factory = sqlite3.Row
+    # WAL + a real busy timeout: the scan runs in a PROCESS pool, so several
+    # workers write IV history at once. The default rollback journal serialises
+    # them into "database is locked" instead of queueing.
+    c.execute("PRAGMA journal_mode=WAL")
+    c.execute("PRAGMA busy_timeout=30000")
+    c.execute("PRAGMA synchronous=NORMAL")
     c.executescript(SCHEMA)
     return c
 
