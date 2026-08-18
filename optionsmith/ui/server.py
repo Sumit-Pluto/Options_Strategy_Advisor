@@ -29,6 +29,10 @@ from ..chain.loaders import _from_dict, from_gateway, synthetic
 from ..core.models import Leg
 from ..core.payoff import evaluate, payoff_at
 from ..gateway.client import GatewayClient, GatewayError
+from ..scanner import universe as scan_universe
+from ..scanner.engine import ScanConfig
+from ..scanner.service import RUNNER
+from ..scanner import store as scan_store
 from ..strategies.library import CATALOG
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -62,6 +66,24 @@ class AdviseReq(ChainSpec):
 
 class BuildReq(ChainSpec):
     key: str
+
+
+class ScanReq(BaseModel):
+    """What the scanner needs. Everything else has a sane default — the point
+    of the screen is one slider, not a form."""
+    pop_min: float = 50.0
+    pop_max: float = 100.0
+    source: str = "live"            # live | synthetic
+    strikes: int = 8
+    max_loss: float = 25_000.0
+    max_legs: int = 4
+    top_per_symbol: int = 3
+    include_indices: bool = False
+
+
+class BlacklistReq(BaseModel):
+    symbol: str
+    blacklisted: bool
 
 
 class PayoffReq(ChainSpec):
@@ -98,7 +120,51 @@ def create_app() -> FastAPI:
 
     @app.get("/")
     def root():
+        """The scanner IS the product. The single-chain advisor stays reachable
+        at /advisor for drilling into one name, but nobody should have to fill
+        in a form to find out what the market is offering."""
+        return FileResponse(STATIC / "scanner.html")
+
+    @app.get("/advisor")
+    def advisor_page():
         return FileResponse(STATIC / "index.html")
+
+    # ---------------- scanner ----------------
+    @app.post("/api/scan/start")
+    def scan_start(req: ScanReq):
+        if req.pop_min > req.pop_max:
+            raise HTTPException(400, "pop_min cannot exceed pop_max")
+        cfg = ScanConfig(pop_min=req.pop_min, pop_max=req.pop_max,
+                         source=req.source, strikes=req.strikes,
+                         max_loss=req.max_loss, max_legs=req.max_legs,
+                         top_per_symbol=req.top_per_symbol,
+                         include_indices=req.include_indices)
+        try:
+            run_id = RUNNER.start(cfg)
+        except RuntimeError as e:
+            raise HTTPException(409, str(e))
+        return {"run_id": run_id, "total": RUNNER.total}
+
+    @app.get("/api/scan/status")
+    def scan_status(limit: int = 100):
+        return RUNNER.status(limit=limit)
+
+    @app.post("/api/scan/stop")
+    def scan_stop():
+        RUNNER.stop()
+        return {"stopping": True}
+
+    @app.get("/api/scan/universe")
+    def scan_universe_list():
+        return {"symbols": scan_universe.with_status(),
+                "active": len(scan_universe.scan_list())}
+
+    @app.post("/api/scan/blacklist")
+    def scan_blacklist(req: BlacklistReq):
+        scan_store.set_blacklisted(req.symbol, req.blacklisted)
+        return {"symbol": req.symbol.upper(),
+                "blacklisted": req.blacklisted,
+                "active": len(scan_universe.scan_list())}
 
     @app.get("/health")
     def health():

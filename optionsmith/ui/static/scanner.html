@@ -1,0 +1,254 @@
+<title>OptionSmith — Scanner</title>
+<style>
+  :root{color-scheme:dark;
+    --bg:#14161a; --panel:#1b1e24; --panel2:#22262e; --line:#2c313a;
+    --ink:#e8eaed; --ink2:#9aa0a6; --ink3:#6b7280;
+    --blue:#3987e5; --good:#4caf50; --bad:#e66767; --warn:#c98500; --violet:#9085e9;}
+  @media (prefers-color-scheme: light){:root:not([data-theme="dark"]){color-scheme:light;
+    --bg:#fcfcfb; --panel:#ffffff; --panel2:#f1f0ee; --line:#dddbd6;
+    --ink:#0b0b0b; --ink2:#52514e; --ink3:#8a887f;
+    --blue:#2a78d6; --good:#008300; --bad:#e34948; --warn:#eda100; --violet:#4a3aa7;}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  header{display:flex;align-items:center;gap:16px;padding:12px 20px;
+    border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
+  .brand{font-weight:700;letter-spacing:.5px} .brand span{color:var(--blue)}
+  .grow{flex:1}
+  a{color:var(--blue);text-decoration:none;font-size:13px}
+  main{padding:16px;max-width:1500px;margin:0 auto}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:14px}
+  .card h3{margin:0 0 12px;font-size:13px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink2)}
+  button{font:inherit;background:var(--blue);border:1px solid var(--blue);color:#fff;
+    font-weight:600;cursor:pointer;border-radius:8px;padding:11px 22px}
+  button:hover:not(:disabled){filter:brightness(1.1)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button.stop{background:var(--bad);border-color:var(--bad)}
+  button.ghost{background:var(--panel2);color:var(--ink);border-color:var(--line);font-weight:500;padding:7px 13px}
+  input,select{font:inherit;background:var(--panel2);color:var(--ink);
+    border:1px solid var(--line);border-radius:7px;padding:7px 9px}
+  label{display:block;font-size:12px;color:var(--ink2);margin:0 0 4px}
+
+  /* ---- the control bar: one band, one button ---- */
+  .ctl{display:flex;gap:22px;align-items:flex-end;flex-wrap:wrap}
+  .band{flex:1;min-width:340px}
+  .bandhead{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+  .bandhead .v{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
+  .bandhead .v small{font-size:12px;color:var(--ink2);font-weight:500}
+  .sliders{position:relative;height:30px}
+  .sliders input[type=range]{position:absolute;left:0;top:6px;width:100%;margin:0;
+    -webkit-appearance:none;background:transparent;pointer-events:none;padding:0;border:0}
+  .sliders input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;pointer-events:auto;
+    height:18px;width:18px;border-radius:50%;background:var(--blue);border:2px solid var(--panel);cursor:grab}
+  .sliders input[type=range]::-moz-range-thumb{pointer-events:auto;height:18px;width:18px;
+    border-radius:50%;background:var(--blue);border:2px solid var(--panel);cursor:grab}
+  .track{position:absolute;left:0;right:0;top:13px;height:5px;background:var(--panel2);
+    border-radius:3px;border:1px solid var(--line)}
+  .fill{position:absolute;top:13px;height:5px;background:var(--blue);border-radius:3px}
+  .ticks{display:flex;justify-content:space-between;font-size:11px;color:var(--ink3);margin-top:2px}
+
+  .prog{height:6px;background:var(--panel2);border-radius:4px;overflow:hidden;margin:12px 0 8px;border:1px solid var(--line)}
+  .prog i{display:block;height:100%;background:var(--blue);width:0;transition:width .3s}
+  .stat{display:flex;gap:20px;flex-wrap:wrap;font-size:12.5px;color:var(--ink2)}
+  .stat b{color:var(--ink);font-variant-numeric:tabular-nums}
+
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{text-align:left;color:var(--ink2);font-weight:600;border-bottom:1px solid var(--line);
+    padding:7px;white-space:nowrap;position:sticky;top:0;background:var(--panel)}
+  td{padding:7px;border-bottom:1px solid var(--line);white-space:nowrap}
+  tr:hover td{background:color-mix(in oklab,var(--blue) 9%,transparent)}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  .sym{font-weight:700}
+  .legs{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--ink2)}
+  .chip{display:inline-block;padding:1px 7px;border-radius:5px;font-size:11px;font-weight:600}
+  .c-gen{background:color-mix(in oklab,var(--violet) 20%,transparent);color:var(--violet)}
+  .c-lib{background:color-mix(in oklab,var(--blue) 16%,transparent);color:var(--blue)}
+  .c-cred{background:color-mix(in oklab,var(--good) 16%,transparent);color:var(--good)}
+  .c-debi{background:color-mix(in oklab,var(--warn) 18%,transparent);color:var(--warn)}
+  .mut{color:var(--ink3)} .pos{color:var(--good)} .neg{color:var(--bad)}
+  .warn{background:color-mix(in oklab,var(--warn) 12%,transparent);border-left:3px solid var(--warn);
+    padding:9px 12px;border-radius:5px;font-size:12.5px;margin-top:10px}
+  .empty{padding:40px;text-align:center;color:var(--ink3)}
+  .uni{display:flex;flex-wrap:wrap;gap:5px;max-height:230px;overflow:auto;margin-top:6px}
+  .u{padding:3px 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel2);
+    font-size:11.5px;cursor:pointer;user-select:none}
+  .u.off{opacity:.34;text-decoration:line-through}
+  details summary{cursor:pointer;color:var(--ink2);font-size:12.5px}
+</style>
+
+<header>
+  <div class="brand">OPTION<span>SMITH</span></div>
+  <div class="grow"></div>
+  <span id="ivcov" class="mut" style="font-size:12px"></span>
+  <a href="/advisor">single-chain advisor →</a>
+</header>
+
+<main>
+  <div class="card">
+    <div class="ctl">
+      <div class="band">
+        <div class="bandhead">
+          <label style="margin:0">Probability of profit — show me structures between</label>
+          <div class="v"><span id="lo">50</span>% <small>to</small> <span id="hi">100</span>%</div>
+        </div>
+        <div class="sliders">
+          <div class="track"></div><div class="fill" id="fill"></div>
+          <input type="range" id="rlo" min="0" max="100" step="1" value="50">
+          <input type="range" id="rhi" min="0" max="100" step="1" value="100">
+        </div>
+        <div class="ticks"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
+      </div>
+      <div>
+        <label>Data</label>
+        <select id="src"><option value="live">Live (Gateway)</option>
+          <option value="synthetic">Synthetic (offline)</option></select>
+      </div>
+      <div>
+        <label>Max loss ₹</label>
+        <input id="maxloss" type="number" value="25000" style="width:110px">
+      </div>
+      <div>
+        <button id="go">Start scanning</button>
+      </div>
+    </div>
+
+    <div class="prog"><i id="bar"></i></div>
+    <div class="stat">
+      <span>Scanned <b id="s_done">0</b> / <b id="s_tot">0</b></span>
+      <span>Opportunities <b id="s_match">0</b></span>
+      <span>Elapsed <b id="s_el">0s</b></span>
+      <span id="s_eta"></span>
+      <span id="s_cur" class="mut"></span>
+      <span id="s_err" class="mut"></span>
+    </div>
+    <div id="note"></div>
+  </div>
+
+  <div class="card">
+    <h3>Opportunities <span id="rank" class="mut" style="text-transform:none;letter-spacing:0">
+      — ranked by POP × reward:risk, not EV</span></h3>
+    <div style="max-height:62vh;overflow:auto">
+      <table id="tbl"><thead><tr>
+        <th>Symbol</th><th>Structure</th><th class="num">POP</th><th class="num">RR</th>
+        <th class="num">Max loss</th><th class="num">Max profit</th><th class="num">Net</th>
+        <th class="num">Margin</th><th class="num">DTE</th><th>Legs</th>
+      </tr></thead><tbody id="rows"></tbody></table>
+      <div class="empty" id="empty">Pick a POP band and press <b>Start scanning</b>.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <details>
+      <summary>Universe &amp; blacklist — <b id="ucount">…</b> names active (click a name to switch it off)</summary>
+      <div class="uni" id="uni"></div>
+    </details>
+  </div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+let TIMER = null, RUNNING = false;
+
+/* ---- POP range slider (two thumbs, kept ordered) ---- */
+const rlo = $('#rlo'), rhi = $('#rhi');
+function syncBand(){
+  let lo = +rlo.value, hi = +rhi.value;
+  if (lo > hi){ [lo, hi] = [hi, lo]; }
+  $('#lo').textContent = lo; $('#hi').textContent = hi;
+  $('#fill').style.left = lo + '%';
+  $('#fill').style.width = (hi - lo) + '%';
+}
+rlo.oninput = rhi.oninput = syncBand; syncBand();
+
+/* ---- universe / blacklist ---- */
+async function loadUniverse(){
+  const r = await fetch('/api/scan/universe'); const d = await r.json();
+  $('#ucount').textContent = d.active;
+  $('#uni').innerHTML = d.symbols.map(s =>
+    `<div class="u${s.blacklisted?' off':''}" data-s="${s.symbol}">${s.symbol}</div>`).join('');
+  document.querySelectorAll('.u').forEach(el => el.onclick = async () => {
+    const on = !el.classList.contains('off');
+    await fetch('/api/scan/blacklist', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({symbol: el.dataset.s, blacklisted: on})});
+    el.classList.toggle('off'); loadUniverse();
+  });
+}
+
+/* ---- scan control ---- */
+$('#go').onclick = async () => {
+  if (RUNNING){ await fetch('/api/scan/stop', {method:'POST'}); return; }
+  let lo = Math.min(+rlo.value, +rhi.value), hi = Math.max(+rlo.value, +rhi.value);
+  $('#rows').innerHTML = ''; $('#note').innerHTML = '';
+  const body = {pop_min: lo, pop_max: hi, source: $('#src').value,
+                max_loss: +$('#maxloss').value || 25000};
+  const r = await fetch('/api/scan/start', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  if (!r.ok){ const e = await r.json().catch(()=>({detail:r.statusText}));
+    $('#note').innerHTML = `<div class="warn">${e.detail}</div>`; return; }
+  RUNNING = true; setBtn();
+  if (TIMER) clearInterval(TIMER);
+  TIMER = setInterval(poll, 900); poll();
+};
+function setBtn(){
+  const b = $('#go');
+  b.textContent = RUNNING ? 'Stop' : 'Start scanning';
+  b.classList.toggle('stop', RUNNING);
+}
+
+const money = v => v === null || v === undefined ? '—'
+  : '₹' + Math.round(v).toLocaleString('en-IN');
+
+async function poll(){
+  const d = await (await fetch('/api/scan/status?limit=200')).json();
+  RUNNING = d.running; setBtn();
+  $('#s_done').textContent = d.scanned; $('#s_tot').textContent = d.total;
+  $('#s_match').textContent = d.matched;
+  $('#s_el').textContent = d.elapsed_s + 's';
+  $('#s_eta').innerHTML = d.eta_s ? `ETA <b>${Math.round(d.eta_s)}s</b>` : '';
+  $('#s_cur').textContent = d.running ? 'scanning ' + d.current : '';
+  $('#s_err').textContent = d.error_count ? d.error_count + ' failed' : '';
+  $('#bar').style.width = d.total ? (100 * d.scanned / d.total) + '%' : '0';
+
+  if (d.iv_coverage) {
+    const c = d.iv_coverage;
+    $('#ivcov').textContent = `IV history: ${c.rows} rows / ${c.symbols} names`;
+  }
+  render(d.results);
+
+  if (!d.running && TIMER){
+    clearInterval(TIMER); TIMER = null;
+    if (d.error_count && d.errors.length){
+      $('#note').innerHTML = `<div class="warn"><b>${d.error_count} symbols failed.</b>
+        First: ${d.errors.slice(0,3).map(e=>e.symbol+' — '+e.error).join('; ')}</div>`;
+    }
+  }
+}
+
+function render(rows){
+  $('#empty').style.display = rows.length ? 'none' : '';
+  if (!rows.length){
+    $('#empty').innerHTML = RUNNING ? 'Scanning… nothing in this POP band yet.'
+      : 'No structure fell inside that POP band. Widen it, or raise max loss.';
+  }
+  $('#rows').innerHTML = rows.map(r => {
+    const legs = r.legs.map(l => `${l.action==='BUY'?'B':'S'} ${l.strike} ${l.right}`
+      + (l.qty>1?'x'+l.qty:'')).join('  ');
+    const cd = r.credit_or_debit === 'CREDIT' ? 'c-cred' : 'c-debi';
+    return `<tr>
+      <td class="sym">${r.symbol}</td>
+      <td>${r.name} <span class="chip ${r.source==='generated'?'c-gen':'c-lib'}">${
+        r.source==='generated'?'GEN':'LIB'}</span></td>
+      <td class="num"><b>${r.pop_screen_pct}%</b></td>
+      <td class="num">${r.rr_ratio === null ? '<span class="pos">unbounded</span>' : r.rr_ratio}</td>
+      <td class="num neg">${money(r.max_loss)}</td>
+      <td class="num pos">${r.max_profit === null ? 'unlimited' : money(r.max_profit)}</td>
+      <td class="num"><span class="chip ${cd}">${money(Math.abs(r.net_premium_per_lot))}</span></td>
+      <td class="num mut">${money(r.margin_estimate)}</td>
+      <td class="num mut">${r.dte}</td>
+      <td class="legs">${legs}</td></tr>`;
+  }).join('');
+}
+
+loadUniverse(); poll();
+</script>

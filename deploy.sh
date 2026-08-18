@@ -18,8 +18,13 @@ DRY=""
 cd "$(dirname "$0")"
 echo "deploying -> $SERVER:$DEST ${DRY:+(DRY RUN)}"
 
+# `data` is NOT optional here: it holds the scanner's ATM IV history, which is
+# accumulated one trading session at a time and CANNOT be rebuilt or backfilled.
+# rsync runs with --delete, so omitting it would erase months of collection on
+# the next deploy.
 EXCLUDES=(--exclude .git --exclude .venv --exclude venv --exclude __pycache__
-          --exclude .DS_Store --exclude ".env" --exclude "*.pyc")
+          --exclude .DS_Store --exclude ".env" --exclude "*.pyc"
+          --exclude "data" --exclude "*.db")
 
 CHANGED=$(rsync -az --delete -i $DRY "${EXCLUDES[@]}" ./ "$SERVER:$DEST/" \
           | awk '{print $2}' | grep -v '/$' || true)
