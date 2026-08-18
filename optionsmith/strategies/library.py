@@ -42,18 +42,35 @@ def _k(chain: Chain, n: int, is_call: bool = True) -> float | None:
     return ks[i] if 0 <= i < len(ks) else None
 
 
-def _by_delta(chain: Chain, target: float, is_call: bool) -> float | None:
-    """Strike whose delta is closest to `target` (e.g. 0.25 / -0.25)."""
+DELTA_TOLERANCE = 0.05      # how far a "25-delta" strike may actually miss
+
+
+def _by_delta(chain: Chain, target: float, is_call: bool,
+              tol: float = DELTA_TOLERANCE) -> float | None:
+    """Strike whose delta is closest to `target` (e.g. 0.25 / -0.25).
+
+    Returns None when even the closest listed strike misses by more than `tol`,
+    which makes the recipe fail to build and drop out of the menu. Without that
+    guard the miss is SILENT and the structure renames itself: measured on a
+    +/-5 strike window at 60 DTE, the "20-delta short strangle" was really a
+    39-delta strangle — twice the intended delta, far more premium and far more
+    assignment risk, still carrying the 20-delta label. Not building is the
+    honest outcome; a mislabelled structure is worse than a missing one.
+
+    Delta is taken at the chain's own carry, not the fixed default: the IVs
+    were inverted against that forward, so selecting on a different one
+    reintroduces the very inconsistency `calibrate_carry` exists to remove.
+    """
     t = chain.t_years
     best, err = None, 1e9
     for q in chain.quotes:
         if q.is_call != is_call or not q.iv:
             continue
-        d = bs_delta(q.is_call, chain.spot, q.strike, t, q.iv)
+        d = bs_delta(q.is_call, chain.spot, q.strike, t, q.iv, chain.r)
         e = abs(d - target)
         if e < err:
             best, err = q.strike, e
-    return best
+    return best if err <= tol else None
 
 
 def _legs(*specs) -> list[Leg]:

@@ -14,6 +14,7 @@ from __future__ import annotations
 import itertools
 import math
 
+from ..analytics.metrics import liquid_smile_spread
 from ..analytics.view import MarketView
 from ..core.models import Chain, Leg, StrategyResult
 from ..core.payoff import evaluate
@@ -86,7 +87,33 @@ def _combos(univ: list, max_legs: int):
                    Leg(c.strike, a.is_call, -1, 1), Leg(d.strike, a.is_call, 1, 1)]
 
 
-def score_of(res: StrategyResult) -> float:
+SMILE_TOLERANCE = 5.0        # vol points of smile the EV term tolerates
+
+
+def ev_confidence(smile_spread: float | None) -> float:
+    """How much of the EV term to trust, given how steep this chain's smile is.
+
+    Legs are PRICED at their own IVs off the smile but VALUED under one blended
+    sigma (see payoff._sigma_for), so any multi-strike structure books the
+    smile's curvature as edge. The steeper the smile, the more of the EV is
+    artifact rather than opportunity:
+
+        <=  5 vol pts   full weight
+           10 vol pts   half
+           20 vol pts   quarter
+
+    This is a MITIGATION, not a fix. It matters most when ranking a whole
+    universe: without it, sorting many chains by EV surfaces the steepest-smile
+    chains first — i.e. it ranks names by how wrong the model is on them. The
+    real fix is building the terminal density from the smile itself
+    (Breeden-Litzenberger), after which this damping should be removed.
+    """
+    if smile_spread is None or smile_spread <= SMILE_TOLERANCE:
+        return 1.0
+    return 1.0 / (1.0 + (smile_spread - SMILE_TOLERANCE) / SMILE_TOLERANCE)
+
+
+def score_of(res: StrategyResult, smile_spread: float | None = None) -> float:
     """Ranking score, shared by generated and classic structures.
 
         score = EV / std(payoff)      RISK-ADJUSTED edge (a trade "Sharpe")
@@ -108,7 +135,7 @@ def score_of(res: StrategyResult) -> float:
     denom = res.payoff_std if res.payoff_std > 1e-9 else (
         res.max_loss if res.max_loss not in (0.0, float("inf"))
         else max(res.margin_estimate, 1.0))
-    sharpe = res.expected_value / denom
+    sharpe = ev_confidence(smile_spread) * res.expected_value / denom
     rr = min(res.rr_ratio, 3.0) / 3.0 if res.rr_ratio else 0.0
     return sharpe + 0.10 * (res.pop_pct / 100.0) + 0.05 * rr \
         - 0.02 * len(res.legs)
@@ -137,6 +164,7 @@ def generate(chain: Chain, view: MarketView, top_n: int = 5,
     seen: set[tuple] = set()
     pool: list[StrategyResult] = []
     tilt = view.tilt
+    smile = liquid_smile_spread(chain)      # computed once, not per candidate
 
     for legs in _combos(univ, max_legs):
         if sum(l.qty for l in legs) > 6:
@@ -165,7 +193,7 @@ def generate(chain: Chain, view: MarketView, top_n: int = 5,
             continue
         seen.add(key)
 
-        res.score = score_of(res)
+        res.score = score_of(res, smile)
         name = classify(res.legs)
         res.is_custom = name == "custom structure"
         res.name = name

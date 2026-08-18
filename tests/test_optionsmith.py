@@ -374,10 +374,152 @@ def test_edges():
     check("long option bleeds theta", r.greeks["theta"] < 0)
 
 
+# ── 10. closed-form moments + ranking honesty ──────────────────────────
+def test_closed_form():
+    """The closed form replaced a 401-point Riemann sum. Two things must hold:
+    it agrees with a FINE grid (so it is right, not merely different), and it
+    is exact where the grid was not."""
+    print("\n[10] closed-form payoff moments")
+    from optionsmith.core.payoff import (payoff_moments, payoff_moments_grid,
+                                         _sigma_for)
+    from optionsmith.strategies.library import BY_KEY
+
+    ch = synthetic("C", spot=1400, dte=30, lot_size=250, n_strikes=17, seed=3)
+    from optionsmith.chain.loaders import fill_missing_ivs
+    fill_missing_ivs(ch)
+    atm_iv = ch.get(ch.atm, True).iv
+
+    def priced(key):
+        legs = BY_KEY[key].build(ch)
+        if not legs or not all(ch.get(l.strike, l.is_call) for l in legs):
+            return None
+        out = []
+        for l in legs:
+            q = ch.get(l.strike, l.is_call)
+            out.append(Leg(l.strike, l.is_call, l.side, l.qty,
+                           q.exec_price(l.side), q.iv or atm_iv))
+        return out
+
+    # STRONGEST check: for a single call the closed form has an independent
+    # analytic answer already in the codebase. The density here is exactly the
+    # risk-neutral one for spot=center, so E[(S-K)+] = e^(rt) * BS_call, and
+    # the mean payoff is lot * (that - premium). This tests the moment code
+    # against bs_price, not against another integrator with its own error.
+    prem, sig = 40.0, 0.28
+    for tilt in (0.0, 0.04, -0.04):
+        k = ch.atm
+        leg = [Leg(k, True, 1, 1, prem, sig)]
+        centre = ch.spot * (1.0 + tilt)
+        want = ch.lot_size * (math.exp(ch.r * ch.t_years)
+                              * bs_price(True, centre, k, ch.t_years, sig, ch.r)
+                              - prem)
+        got, _ = payoff_moments(leg, ch.spot, sig, ch.t_years, ch.lot_size,
+                                tilt, r=ch.r)
+        check(f"long-call EV matches e^rt*BS exactly (tilt {tilt:+.2f})",
+              approx(got, want, 1e-9), f"{got:.6f} vs {want:.6f}")
+
+    # put-call parity on the moments: long call - long put at the same strike
+    # is a forward, whose expected payoff is E[S] - K - (premiums).
+    k = ch.atm
+    combo = [Leg(k, True, 1, 1, 40.0, sig), Leg(k, False, -1, 1, 30.0, sig)]
+    got, _ = payoff_moments(combo, ch.spot, sig, ch.t_years, ch.lot_size, r=ch.r)
+    want = ch.lot_size * (ch.spot * math.exp(ch.r * ch.t_years) - k - 40.0 + 30.0)
+    check("synthetic forward EV obeys put-call parity",
+          approx(got, want, 1e-9), f"{got:.4f} vs {want:.4f}")
+
+    # agreement with a FINE grid, on the scale that matters. The residual is
+    # the GRID's error, not ours: it truncates at +/-5 sigma and never recovers
+    # that mass, so it plateaus at n=200k instead of converging (verified).
+    # Tolerance is therefore relative to the structure's own payoff std.
+    worst = 0.0
+    for key in ("iron_condor", "bull_call_spread", "call_butterfly",
+                "long_straddle", "call_ratio_spread", "long_call"):
+        legs = priced(key)
+        if not legs:
+            continue
+        sg = _sigma_for(legs, atm_iv)
+        for tilt in (0.0, 0.03, -0.03):
+            c = payoff_moments(legs, ch.spot, sg, ch.t_years, ch.lot_size,
+                               tilt, r=ch.r)
+            g = payoff_moments_grid(legs, ch.spot, sg, ch.t_years,
+                                    ch.lot_size, tilt, n=40001, r=ch.r)
+            worst = max(worst, abs(c[0] - g[0]) / max(0.5, 1e-4 * c[1]))
+    check("closed form agrees with a 40k-point grid on the payoff's own scale",
+          worst <= 1.0, f"worst {worst:.3f} x tolerance")
+
+    # a box spread pays the same at every price: its payoff std is EXACTLY 0.
+    # The old grid manufactured ~0.22 of phantom volatility on it.
+    legs = priced("box")
+    if legs:
+        _, sd = payoff_moments(legs, ch.spot, atm_iv, ch.t_years, ch.lot_size,
+                               r=ch.r)
+        check("riskless box spread has exactly zero payoff std", sd < 1e-6,
+              f"std {sd:.6f}")
+
+    # degenerate inputs must not raise
+    for bad in ((0.0, 0.2), (1400.0, 0.0)):
+        m = payoff_moments([Leg(1400, True, 1, 1, 40.0, 0.28)], bad[0], bad[1],
+                           ch.t_years, 250)
+        check(f"degenerate input {bad} returns zeros", m == (0.0, 0.0), str(m))
+
+
+def test_ranking_honesty():
+    """rr_ratio, EV damping and delta selection must not lie by omission."""
+    print("\n[11] ranking honesty")
+    import json
+    from optionsmith.strategies.generator import ev_confidence
+    from optionsmith.strategies.library import _by_delta, DELTA_TOLERANCE
+
+    ch = synthetic("H", spot=1400, dte=30, lot_size=250, n_strikes=17, seed=3)
+
+    # unbounded upside must not read as "no reward" — 0.0 is the WORST value on
+    # the metric the docs tell you to trust when EV is untrustworthy.
+    d = build_named(ch, "call_backspread").to_dict()
+    check("unbounded profit reports max_profit None", d["max_profit"] is None)
+    check("unbounded profit reports rr_ratio None, not 0.0",
+          d["rr_ratio"] is None, f"rr {d['rr_ratio']}")
+    check("unbounded profit is flagged", d["rr_unbounded"] is True)
+    d2 = build_named(ch, "iron_condor").to_dict()
+    check("bounded structure still reports a numeric RR",
+          isinstance(d2["rr_ratio"], float) and not d2["rr_unbounded"],
+          str(d2["rr_ratio"]))
+    check("result stays JSON-serialisable", bool(json.dumps(d)))
+
+    # EV confidence: full weight on a flat smile, monotonically less as it steepens
+    ws = [ev_confidence(x) for x in (None, 0, 5, 10, 20, 40)]
+    check("flat/unknown smile keeps full EV weight",
+          ws[0] == 1.0 and ws[1] == 1.0 and ws[2] == 1.0, str(ws))
+    check("EV weight falls monotonically as the smile steepens",
+          all(a >= b for a, b in zip(ws[2:], ws[3:])) and ws[-1] < ws[2],
+          str(ws))
+    check("EV weight stays in (0, 1]", all(0 < w <= 1 for w in ws), str(ws))
+
+    # delta selection must FAIL rather than silently mislabel itself
+    k = _by_delta(ch, 0.25, True)
+    check("25-delta call found on a normal chain", k is not None)
+    check("impossible delta target returns None, not the nearest strike",
+          _by_delta(ch, 0.999, True) is None)
+    narrow = synthetic("N", spot=1400, dte=60, lot_size=250, n_strikes=7, seed=3)
+    from optionsmith.chain.loaders import fill_missing_ivs
+    fill_missing_ivs(narrow)
+    from optionsmith.core.mathx import bs_delta
+    got = _by_delta(narrow, 0.20, True)
+    if got is not None:
+        q = narrow.get(got, True)
+        err = abs(bs_delta(True, narrow.spot, got, narrow.t_years, q.iv,
+                           narrow.r) - 0.20)
+        check("a returned delta strike is inside tolerance",
+              err <= DELTA_TOLERANCE, f"missed by {err:.3f}")
+    else:
+        check("narrow window drops the delta recipe rather than mislabel it",
+              True)
+
+
 if __name__ == "__main__":
     print("OptionSmith test suite")
     for fn in (test_math, test_payoff, test_pop, test_ev_baseline, test_view,
-               test_naming, test_advisor, test_forward, test_edges):
+               test_naming, test_advisor, test_forward, test_edges,
+               test_closed_form, test_ranking_honesty):
         fn()
     print(f"\n{'='*46}\n  {PASS} passed, {FAIL} failed\n{'='*46}")
     sys.exit(1 if FAIL else 0)

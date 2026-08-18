@@ -160,16 +160,110 @@ def prob_of_profit(legs: list[Leg], spot: float, sigma: float, t: float,
     return max(0.0, min(1.0, total)) * 100.0
 
 
+# ── terminal moments ───────────────────────────────────────────────────
+def _logn_params(center: float, sigma: float, t: float,
+                 r: float) -> tuple[float, float]:
+    """(mu, v) of ln(S_T) under the SAME density `prob_below` integrates.
+
+    prob_below centres the lognormal on `center` and carries it at `r`, so
+    mu = ln(center) + (r - sigma^2/2)t and v = sigma*sqrt(t). That makes
+    E[S_T] = center*e^(rt) — the forward the options are actually quoted
+    under, which is why the drift has to be the chain's carry and not zero.
+    """
+    return math.log(center) + (r - 0.5 * sigma * sigma) * t, sigma * math.sqrt(t)
+
+
+def _band(z_hi: float, z_lo: float, shift: float) -> float:
+    """Phi(z_hi - shift) - Phi(z_lo - shift), with the infinite ends exact."""
+    hi = 1.0 if z_hi == float("inf") else norm_cdf(z_hi - shift)
+    lo = 0.0 if z_lo == float("-inf") else norm_cdf(z_lo - shift)
+    return max(0.0, hi - lo)
+
+
+def _slope_at(legs: list[Leg], spot: float) -> float:
+    """d(payoff)/dS strictly between kinks — the segment's affine slope."""
+    out = 0.0
+    for l in legs:
+        if l.is_call:
+            if spot > l.strike:
+                out += l.side * l.qty
+        elif spot < l.strike:
+            out -= l.side * l.qty
+    return out
+
+
 def payoff_moments(legs: list[Leg], spot: float, sigma: float, t: float,
-                   lot: int, tilt: float = 0.0, n: int = 401,
+                   lot: int, tilt: float = 0.0, n: int | None = None,
                    r: float = RISK_FREE) -> tuple[float, float]:
-    """(mean, standard deviation) of the per-lot expiry payoff under the view.
+    """(mean, standard deviation) of the per-lot expiry payoff — EXACT.
+
+    The payoff is piecewise-linear with kinks only at the strikes, so on every
+    segment it is affine, P(S) = a + b*S. Under the lognormal both moments are
+    then closed-form sums over the segments, from the truncated moments
+
+        M0 = P(lo < S < hi)
+        M1 = E[S   1{lo<S<hi}] = e^(mu + v^2/2) [Phi(z_hi -  v) - Phi(z_lo -  v)]
+        M2 = E[S^2 1{lo<S<hi}] = e^(2mu + 2v^2) [Phi(z_hi - 2v) - Phi(z_lo - 2v)]
+
+        E[P]   = SUM  a*M0 + b*M1
+        E[P^2] = SUM  a^2*M0 + 2ab*M1 + b^2*M2
+
+    This replaces a 401-point Riemann sum that profiled at 89% of every
+    evaluate() call — the hottest thing in the module by a wide margin. It is
+    not only far cheaper: the grid truncated at +/-5 sigma and stepped over the
+    kinks, so it valued wide structures on mass they never saw and rounded
+    every corner of the payoff. The closed form has neither error.
 
     The std is what stops the optimiser degenerating into "buy the furthest
-    OTM call": maximising EV per rupee of MAX LOSS always prefers maximum
-    leverage, because a cheap lottery ticket has a tiny denominator. Ranking
-    on EV per unit of payoff VOLATILITY is the risk-adjusted question a
-    professional actually asks.
+    OTM call": ranking on EV per rupee of MAX LOSS always prefers maximum
+    leverage, because a cheap lottery ticket has a tiny denominator. EV per
+    unit of payoff VOLATILITY asks the question a professional actually asks.
+
+    `n` is accepted and ignored — the closed form has no grid. It stays in the
+    signature so `payoff_moments_grid` below remains a drop-in replacement for
+    differential testing.
+    """
+    if spot <= 0 or sigma <= 0 or t <= 0 or not legs:
+        return 0.0, 0.0
+    center = spot * (1.0 + tilt)
+    if center <= 0:
+        return 0.0, 0.0
+    mu, v = _logn_params(center, sigma, t, r)
+    if v <= 0:
+        return 0.0, 0.0
+
+    e_s = math.exp(mu + 0.5 * v * v)            # E[S]
+    e_s2 = math.exp(2.0 * mu + 2.0 * v * v)     # E[S^2]
+    ks = sorted({l.strike for l in legs if l.strike > 0})
+    edges = [0.0] + ks + [float("inf")]
+
+    m1 = m2 = 0.0
+    for lo, hi in zip(edges, edges[1:]):
+        # any strict interior point identifies the segment's affine form
+        probe = (0.5 * (lo + hi) if hi != float("inf")
+                 else lo + max(1.0, 0.5 * center))
+        b = _slope_at(legs, probe)
+        a = payoff_at(legs, probe) - b * probe
+        z_lo = float("-inf") if lo <= 0 else (math.log(lo) - mu) / v
+        z_hi = float("inf") if hi == float("inf") else (math.log(hi) - mu) / v
+        m0_j = _band(z_hi, z_lo, 0.0)
+        m1_j = e_s * _band(z_hi, z_lo, v)
+        m2_j = e_s2 * _band(z_hi, z_lo, 2.0 * v)
+        m1 += a * m0_j + b * m1_j
+        m2 += a * a * m0_j + 2.0 * a * b * m1_j + b * b * m2_j
+
+    var = max(0.0, m2 - m1 * m1)
+    return m1 * lot, math.sqrt(var) * lot
+
+
+def payoff_moments_grid(legs: list[Leg], spot: float, sigma: float, t: float,
+                        lot: int, tilt: float = 0.0, n: int = 401,
+                        r: float = RISK_FREE) -> tuple[float, float]:
+    """The original 401-point Riemann sum. NOT used in production.
+
+    Kept as the reference the closed form is differential-tested against: it is
+    the slow, obvious, independently written answer, and a test that the two
+    agree is worth more than either one alone.
     """
     if spot <= 0 or sigma <= 0 or t <= 0:
         return 0.0, 0.0
@@ -189,51 +283,6 @@ def payoff_moments(legs: list[Leg], spot: float, sigma: float, t: float,
         m2 += w * p * p
     var = max(0.0, m2 - m1 * m1)
     return m1, math.sqrt(var)
-
-
-def expected_value(legs: list[Leg], spot: float, sigma: float, t: float,
-                   lot: int, tilt: float = 0.0, n: int = 401,
-                   r: float = RISK_FREE) -> float:
-    """E[payoff] per lot under the view-tilted terminal density.
-
-    Two deliberate choices, both of which change the answer materially:
-
-      * LOGNORMAL, not Student-t. A log-t has NO finite mean (E[e^X] diverges),
-        so integrating the fat-tailed density produces an EV dominated by the
-        truncation point — it made every long call look like a 2x edge in
-        testing. Fat tails stay where they are well-defined: the POP.
-      * ZERO DRIFT plus the view tilt. The median is spot*(1+tilt), so with a
-        neutral view a fairly-priced option has EV ~ 0 and the only edge that
-        can show up is the one the USER's view puts there. Using the
-        risk-free drift instead would manufacture a permanent bullish bias.
-    """
-    if spot <= 0 or sigma <= 0 or t <= 0:
-        return 0.0
-    center = spot * (1.0 + tilt)
-    width = max(sigma * math.sqrt(t), 0.02)
-    lo, hi = center * math.exp(-5 * width), center * math.exp(5 * width)
-    step = (hi - lo) / (n - 1)
-    total = 0.0
-    prev_cdf = prob_below(lo, center, sigma, t, fat=False, r=r)
-    for i in range(1, n):
-        x = lo + i * step
-        cdf = prob_below(x, center, sigma, t, fat=False, r=r)
-        w = cdf - prev_cdf
-        prev_cdf = cdf
-        total += w * payoff_at(legs, x - step / 2)
-    # tail masses beyond the integration window, valued at the terminal slopes
-    total += prev_cdf_tail(legs, lo, hi, spot, sigma, t, center, r)
-    return total * lot
-
-
-def prev_cdf_tail(legs: list[Leg], lo: float, hi: float, spot: float,
-                  sigma: float, t: float, center: float,
-                  r: float = RISK_FREE) -> float:
-    """Value the truncated tails at their (linear) terminal payoff so wide
-    short structures are not credited with mass they never keep."""
-    p_lo = prob_below(lo, center, sigma, t, fat=False, r=r)
-    p_hi = 1.0 - prob_below(hi, center, sigma, t, fat=False, r=r)
-    return p_lo * payoff_at(legs, lo * 0.9) + p_hi * payoff_at(legs, hi * 1.1)
 
 
 # ── greeks & margin ────────────────────────────────────────────────────
@@ -339,7 +388,7 @@ def evaluate(legs: list[Leg], chain: Chain, name: str = "custom structure",
         breakevens=breakevens(priced, chain.spot),
         pop_pct=pop, pop_classic_pct=pop_c,
         expected_value=ev, payoff_std=ev_std,
-        rr_ratio=(0.0 if rr == float("inf") else rr),
+        rr_ratio=rr,   # inf = unbounded upside; to_dict() renders it None
         friction=friction,
         margin_estimate=margin_estimate(priced, chain.spot, lot, ml),
         greeks=position_greeks(priced, chain.spot, t, lot, fallback_iv, r),

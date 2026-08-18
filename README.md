@@ -48,10 +48,10 @@ print(ic.breakevens, ic.max_loss, ic.pop_pct)
 
 | Output | How it is produced |
 |---|---|
-| max profit / max loss | exact, from the payoff's kink points; unbounded detected analytically. The **downside is never treated as infinite** (price cannot go below zero) — a mistake that silently deletes every put structure |
+| max profit / max loss | exact, from the payoff's kink points; unbounded detected analytically. The **downside is never treated as infinite** (price cannot go below zero) — a mistake that silently deletes every put structure. Unbounded profit reports `None` in both `max_profit` and `rr_ratio` (never `0.0`, which reads as *no reward* on the metric you fall back to when EV is untrustworthy) |
 | breakevens | exact zero-crossings (the payoff is piecewise-linear, so interpolation between kinks is not an approximation) |
-| **POP** | fat-tailed (Student-t, df=5), **friction-aware** (a win is payoff > costs, not > 0), and smile-aware (sigma = mean of the legs' own IVs). The textbook lognormal figure is also reported as `pop_classic_pct` so the optimism gap stays visible |
-| expected value | integrated under a **lognormal** density centred on the forward and tilted by your view. Deliberately *not* the fat-tailed density: a log-t has no finite mean, so integrating it makes every long call look like a 2× edge |
+| **POP** | fat-tailed (Student-t, df=5), **friction-aware** (a win is payoff > costs, not > 0), and smile-aware (sigma = mean of the legs' own IVs). The textbook lognormal figure is also reported as `pop_classic_pct` so the optimism gap stays visible. Note it is *hold-to-expiry* and *view-conditional* — it says nothing about the path, and it shifts with your directional tilt |
+| expected value | **closed form**, not a grid. The payoff is piecewise-linear, so E[P] and Var[P] are exact sums of truncated lognormal moments — verified against `bs_price` to 1e-9. Deliberately *not* the fat-tailed density: a log-t has no finite mean, so integrating it makes every long call look like a 2× edge |
 | ranking | EV per unit of **payoff standard deviation** (a trade "Sharpe") + small POP/shape terms. Ranking by EV per rupee of max loss instead always picks the cheapest lottery ticket — an artefact of the denominator, not an edge |
 | prices used | **executable** prices: buy at ask, sell at bid. With a neutral view every structure therefore shows EV ≈ −(friction + spread), which is the correct no-arbitrage answer |
 | margin | rough SPAN proxy (defined-risk ≈ max loss; naked shorts ≈ 15% of notional). An estimate — your broker is the source of truth |
@@ -182,7 +182,7 @@ optionsmith/
   advisor.py  the orchestrator: advise() / build_menu() / build_named()
   cli/        python -m optionsmith …
   ui/         FastAPI + one self-contained dashboard page
-tests/        116 assertions, no pytest needed
+tests/        135 assertions, no pytest needed
 examples/     sample chain JSON
 deploy/       systemd unit
 ```
@@ -190,8 +190,8 @@ deploy/       systemd unit
 ## Tests
 
 ```bash
-python tests/test_optionsmith.py      # 86 passed — maths, payoff, POP, carry
-python tests/test_gateway.py          # 30 passed — payload mapping, offline
+python tests/test_optionsmith.py      # 105 passed — maths, payoff, POP, carry
+python tests/test_gateway.py          # 30 passed  — payload mapping, offline
 ```
 
 `test_gateway.py` replays a captured Gateway payload, so the mapping that would
@@ -221,7 +221,12 @@ width, the no-arbitrage EV baseline, the vol-edge direction, and shape naming
   | flat smile, same chain | long put | −164 ← correct |
 
   So on a steep chain, **rank by RR and POP, not by EV**. `ChainMetrics` warns
-  whenever the liquid smile spans more than 5 vol points. Fixing it properly
+  whenever the liquid smile spans more than 5 vol points, and the ranker now
+  *damps* the EV term as the smile steepens (`generator.ev_confidence`: full
+  weight to 5 vol points, half at 10, a quarter at 20). That damping is a
+  mitigation, not a fix — it is near-uniform within one chain, so it barely
+  reorders a single report; its job is to stop the steepest-smile *names*
+  dominating when many chains are ranked against each other. Fixing it properly
   means building the terminal density from the smile (Breeden–Litzenberger on
   the call curve) instead of from one sigma — not yet done.
 * **Carry is calibrated, not assumed — but only when the chain can say.** Indian
@@ -236,6 +241,12 @@ width, the no-arbitrage EV baseline, the vol-edge direction, and shape naming
 * **POP is an estimate for ranking, not a promise.** Fat tails help; they do
   not make the number a probability you should stake a business on.
 * **Margin is a proxy**, not a SPAN calculation.
+* **Delta-selected recipes can refuse to build.** The 25Δ strangle, 20Δ
+  strangle and 25Δ risk reversal now return nothing when the closest listed
+  strike misses the target delta by more than 0.05, instead of silently
+  relabelling themselves. On a ±5-strike window at 60 DTE the old behaviour
+  produced a "20Δ short strangle" whose call was actually 39Δ. Widen the strike
+  window (`--strikes`) if a delta recipe disappears from the menu.
 * **Single expiry.** Calendars and diagonals need a two-expiry chain — the
   models support the legs, the loaders and generator do not yet.
 * **No live order routing** — by design. This is an advisor.

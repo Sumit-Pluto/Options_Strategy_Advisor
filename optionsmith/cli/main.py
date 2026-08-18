@@ -67,7 +67,7 @@ def _print_result(r: dict, indent: str = "  ") -> None:
           f" | margin ~{_fmt_money(r['margin_estimate'])}")
     print(f"{indent}  breakevens {r['breakevens']} | POP {r['pop_pct']}% "
           f"(textbook {r['pop_classic_pct']}%) | EV {_fmt_money(r['expected_value'])}"
-          f" | RR {r['rr_ratio']}")
+          f" | RR {'unbounded' if r['rr_ratio'] is None else r['rr_ratio']}")
     g = r["greeks"]
     print(f"{indent}  delta {g.get('delta', 0):+.1f} gamma {g.get('gamma', 0):+.3f} "
           f"vega {g.get('vega', 0):+.1f}/pt theta {g.get('theta', 0):+.1f}/day")

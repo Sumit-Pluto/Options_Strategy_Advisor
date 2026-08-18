@@ -62,6 +62,21 @@ class ChainMetrics:
 
 
 
+def liquid_smile_spread(chain: Chain) -> float | None:
+    """Max-min IV across the LIQUID contracts, in vol points. None if too thin.
+
+    Shared with the ranker rather than left inline in `compute()`: this is the
+    number that says how much of a multi-strike structure's EV is smile
+    artifact rather than edge, and the generator needs it without paying for a
+    full metrics pass. Illiquid wings invert to absurd IVs and would make every
+    chain look extreme, so they are excluded.
+    """
+    ivs = [q.iv for q in chain.liquid() if q.iv and q.iv > 0]
+    if len(ivs) < 4:
+        return None
+    return (max(ivs) - min(ivs)) * 100.0
+
+
 def _max_pain(chain: Chain) -> float | None:
     """Strike minimising total in-the-money value of all open contracts."""
     ks = chain.strikes
@@ -96,7 +111,7 @@ def _skew_25d(chain: Chain) -> float | None:
     for q in chain.quotes:
         if not q.iv:
             continue
-        d = bs_delta(q.is_call, chain.spot, q.strike, t, q.iv)
+        d = bs_delta(q.is_call, chain.spot, q.strike, t, q.iv, chain.r)
         target = 0.25 if q.is_call else -0.25
         err = abs(d - target)
         if q.is_call and (best_c is None or err < best_c[0]):
@@ -122,7 +137,7 @@ def _gex(chain: Chain) -> tuple[float, float | None]:
     for q in chain.quotes:
         if not q.iv or q.oi <= 0:
             continue
-        g = bs_gamma(chain.spot, q.strike, t, q.iv)
+        g = bs_gamma(chain.spot, q.strike, t, q.iv, chain.r)
         val = g * q.oi * chain.lot_size * chain.spot * chain.spot * 0.01
         per_strike[q.strike] = per_strike.get(q.strike, 0.0) + \
             (val if q.is_call else -val)
@@ -211,9 +226,8 @@ def compute(chain: Chain, build_pct: float = 20.0,
     # Smile steepness across the LIQUID contracts (the ones a structure would
     # actually be built from). Illiquid wings invert to absurd IVs and would
     # make every chain look extreme.
-    liq_ivs = [q.iv for q in chain.liquid() if q.iv and q.iv > 0]
-    if len(liq_ivs) >= 4:
-        m.smile_spread = (max(liq_ivs) - min(liq_ivs)) * 100.0
+    m.smile_spread = liquid_smile_spread(chain)
+    if m.smile_spread is not None:
         if m.smile_spread > 5.0:
             m.notes.append(
                 f"smile spans {m.smile_spread:.1f} vol points across liquid "

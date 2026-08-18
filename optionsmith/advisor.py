@@ -19,6 +19,7 @@ import datetime as dt
 from dataclasses import dataclass, field
 
 from .analytics import metrics as metrics_mod
+from .analytics.metrics import liquid_smile_spread
 from .analytics.view import MarketView, from_user, infer
 from .chain.loaders import fill_missing_ivs
 from .core.models import Chain, StrategyResult
@@ -70,6 +71,7 @@ def build_menu(chain: Chain, view: MarketView,
     recommendations unless the caller explicitly allows them.
     """
     tags = _view_tags(view) if restrict_to_view else None
+    smile = liquid_smile_spread(chain)     # same EV damping the generator uses
     out: list[StrategyResult] = []
     for recipe, legs in library.build_all(chain, tags):
         try:
@@ -79,7 +81,7 @@ def build_menu(chain: Chain, view: MarketView,
         except Exception:
             continue
         res.is_custom = False
-        res.score = score_of(res)          # identical scoring to generated
+        res.score = score_of(res, smile)   # identical scoring to generated
         out.append(res)
     out.sort(key=lambda r: -r.score)
     return out

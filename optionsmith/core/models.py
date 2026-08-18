@@ -242,7 +242,14 @@ class StrategyResult:
             "pop_classic_pct": round(self.pop_classic_pct, 1),
             "expected_value": round(self.expected_value, 0),
             "payoff_std": round(self.payoff_std, 0),
-            "rr_ratio": round(self.rr_ratio, 2),
+            # None = UNBOUNDED, exactly as max_profit above. Reporting 0.0 for
+            # an unbounded upside reads as "no reward" — the worst possible
+            # value on the very metric the docs tell you to fall back to when
+            # EV is untrustworthy (a steep smile), which is when unbounded
+            # structures dominate.
+            "rr_ratio": (None if self.rr_ratio == float("inf")
+                         else round(self.rr_ratio, 2)),
+            "rr_unbounded": self.rr_ratio == float("inf"),
             "friction": round(self.friction, 0),
             "margin_estimate": round(self.margin_estimate, 0),
             "greeks": {k: round(v, 4) for k, v in self.greeks.items()},
