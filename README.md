@@ -22,7 +22,7 @@ python -m optionsmith demo             # works with nothing installed but Python
 
 ```bash
 python -m optionsmith demo                          # synthetic chain, 2 views
-python -m optionsmith list                          # the 30-strategy catalogue
+python -m optionsmith list                          # the 36-strategy catalogue
 python -m optionsmith payoff demo iron_condor       # ASCII payoff diagram
 python -m optionsmith advise demo --view bullish --move 3 --iv-pct 85
 python -m optionsmith ui                            # dashboard on :8899
@@ -58,13 +58,40 @@ print(ic.breakevens, ic.max_loss, ic.pop_pct)
 
 ## The two engines
 
-**1. Classic library — 30 named structures** (`optionsmith/strategies/library.py`)
+**1. Classic library — 36 named structures** (`optionsmith/strategies/library.py`)
 singles · verticals · straddle/strangle (delta-selected) · iron condor &
 butterfly · call/put flies incl. broken wing · condors · ratio spreads and
 backspreads · risk reversal · synthetic long · jade lizard · strap/strip ·
 guts · box. Each carries the view it expresses and an honest caveat
 ("iron condors win 70–80% of the time and lose multiples of the credit when
 they fail — check the RR, not the POP").
+
+**Strike placement comes in two flavours.** 30 recipes place strikes at a fixed
+offset from ATM (`_k`) or by delta. Six **wall-anchored** variants place them
+where the chain itself says the levels are — shorts *at* the OI walls, a
+butterfly body *at* max pain. Until these existed the walls and max pain were
+computed, displayed and used to pick a direction, then discarded at exactly the
+moment they were most useful: an iron condor wrote its short call at ATM+2
+whether the wall sat at 1425 or 1500.
+
+Measured on a chain with walls at ±7% (`test_wall_anchored`):
+
+| | offset | @ walls |
+|---|---|---|
+| iron condor POP | 25.0% | **50.8%** |
+| bull put spread POP | 58.6% | **77.1%** |
+| bear call spread POP | 54.8% | **73.6%** |
+| iron condor credit/lot | ₹4,892 | ₹1,033 |
+
+**This is not free POP.** You are selling further from the money, so the credit
+collapses and RR falls with it — the ordinary trade-off, but now struck at the
+level the market marks rather than at an arbitrary offset. Both placements are
+scored identically and compete in the same ranking, so the report shows which
+one actually won. Anchoring does not always win: the jade lizard is worse at
+the walls (69.1% → 54.5%), and when the walls sit close to spot there is
+nothing to gain. A wall on the wrong side of spot is deep-ITM inventory rather
+than a barrier, so those recipes refuse to build instead of writing a short in
+the money.
 
 **2. Custom generator** (`optionsmith/strategies/generator.py`)
 enumerates 1–4 leg combinations over the chain's **liquid** contracts, keeps
@@ -182,7 +209,7 @@ optionsmith/
   advisor.py  the orchestrator: advise() / build_menu() / build_named()
   cli/        python -m optionsmith …
   ui/         FastAPI + one self-contained dashboard page
-tests/        135 assertions, no pytest needed
+tests/        145 assertions, no pytest needed
 examples/     sample chain JSON
 deploy/       systemd unit
 ```
@@ -190,7 +217,7 @@ deploy/       systemd unit
 ## Tests
 
 ```bash
-python tests/test_optionsmith.py      # 105 passed — maths, payoff, POP, carry
+python tests/test_optionsmith.py      # 115 passed — maths, payoff, POP, carry
 python tests/test_gateway.py          # 30 passed  — payload mapping, offline
 ```
 

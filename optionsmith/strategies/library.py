@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
+from ..analytics.metrics import call_wall, max_pain, put_wall
 from ..core.mathx import bs_delta
 from ..core.models import Chain, Leg
 
@@ -71,6 +72,37 @@ def _by_delta(chain: Chain, target: float, is_call: bool,
         if e < err:
             best, err = q.strike, e
     return best if err <= tol else None
+
+
+def _from_anchor(chain: Chain, anchor: float | None, n: int,
+                 is_call: bool) -> float | None:
+    """Strike `n` steps from a STRUCTURAL anchor (a wall, max pain) rather than
+    from ATM.
+
+    This is the difference between "sell the 2nd strike out" and "sell where
+    the market says the wall is". The offset recipes place strikes at a fixed
+    distance from spot regardless of what the chain says; these place them at
+    the level the open interest actually marks.
+    """
+    if anchor is None:
+        return None
+    ks = sorted({q.strike for q in chain.quotes if q.is_call == is_call})
+    if not ks:
+        return None
+    i = min(range(len(ks)), key=lambda j: abs(ks[j] - anchor)) + n
+    return ks[i] if 0 <= i < len(ks) else None
+
+
+def _walls(chain: Chain) -> tuple[float | None, float | None]:
+    """(call wall, put wall) — but only when they bracket spot sanely.
+
+    A wall on the wrong side of spot is not a barrier, it is deep-ITM
+    inventory. Anchoring to it would write a short IN the money, so the
+    structure refuses to build instead."""
+    cw, pw = call_wall(chain), put_wall(chain)
+    if cw is None or pw is None or pw >= cw:
+        return None, None
+    return cw, pw
 
 
 def _legs(*specs) -> list[Leg]:
@@ -224,6 +256,59 @@ def _box(c):
                  (k2, False, 1, 1), (k1, False, -1, 1))
 
 
+# ── wall-anchored: strikes placed where the CHAIN says, not at fixed offsets ──
+def _wall_iron_condor(c):
+    """Shorts AT the walls, wings one strike beyond.
+
+    The range trade the metrics are actually pointing at: if the market has
+    written its resistance at 1470 and support at 1330, that is where the
+    short strikes belong — not at ATM+/-2, which ignores the read entirely."""
+    cw, pw = _walls(c)
+    return _legs((_from_anchor(c, pw, -1, False), False, 1, 1),
+                 (_from_anchor(c, pw, 0, False), False, -1, 1),
+                 (_from_anchor(c, cw, 0, True), True, -1, 1),
+                 (_from_anchor(c, cw, 1, True), True, 1, 1))
+
+
+def _wall_bull_put_spread(c):
+    """Sell the put wall, buy two strikes below it."""
+    _, pw = _walls(c)
+    return _legs((_from_anchor(c, pw, 0, False), False, -1, 1),
+                 (_from_anchor(c, pw, -2, False), False, 1, 1))
+
+
+def _wall_bear_call_spread(c):
+    """Sell the call wall, buy two strikes above it."""
+    cw, _ = _walls(c)
+    return _legs((_from_anchor(c, cw, 0, True), True, -1, 1),
+                 (_from_anchor(c, cw, 2, True), True, 1, 1))
+
+
+def _wall_short_strangle(c):
+    """Naked at both walls — the highest-POP expression of a range view, and
+    the one that loses the most when the range fails. Undefined risk."""
+    cw, pw = _walls(c)
+    return _legs((_from_anchor(c, cw, 0, True), True, -1, 1),
+                 (_from_anchor(c, pw, 0, False), False, -1, 1))
+
+
+def _pin_butterfly(c):
+    """Body at MAX PAIN — a butterfly is a bet on where price finishes, and
+    max pain is the chain's own estimate of exactly that."""
+    mp = max_pain(c)
+    return _legs((_from_anchor(c, mp, -2, True), True, 1, 1),
+                 (_from_anchor(c, mp, 0, True), True, -1, 2),
+                 (_from_anchor(c, mp, 2, True), True, 1, 1))
+
+
+def _wall_jade_lizard(c):
+    """Short put at support, short call spread at resistance."""
+    cw, pw = _walls(c)
+    return _legs((_from_anchor(c, pw, 0, False), False, -1, 1),
+                 (_from_anchor(c, cw, 0, True), True, -1, 1),
+                 (_from_anchor(c, cw, 2, True), True, 1, 1))
+
+
 CATALOG: list[Recipe] = [
     Recipe("long_call", "long call", (BULL, VOL_UP), _long_call,
            "Unlimited upside, but theta bleeds daily and you need the move to "
@@ -318,6 +403,32 @@ CATALOG: list[Recipe] = [
     Recipe("guts", "long guts", (VOL_UP,), _guts,
            "ITM strangle — more intrinsic, wider spreads, rarely optimal vs a "
            "plain strangle.", "volatility"),
+    # --- wall-anchored variants: same shapes, structural strikes -------
+    Recipe("wall_iron_condor", "iron condor @ walls", (NEUTRAL, VOL_DOWN),
+           _wall_iron_condor,
+           "Shorts sit at the OI walls instead of a fixed offset, so the "
+           "profit zone is the range the market itself has written. Higher POP "
+           "than the ATM-offset condor — and a smaller credit for it.", "wall"),
+    Recipe("wall_bull_put_spread", "bull put spread @ put wall",
+           (BULL, NEUTRAL, VOL_DOWN), _wall_bull_put_spread,
+           "Sells the strike with the most put OI below spot — the level the "
+           "market is defending. The wall holding is the whole thesis.", "wall"),
+    Recipe("wall_bear_call_spread", "bear call spread @ call wall",
+           (BEAR, NEUTRAL, VOL_DOWN), _wall_bear_call_spread,
+           "Sells resistance. If the call wall is written by hedged supply it "
+           "holds; if it is a breakout target it does not.", "wall"),
+    Recipe("wall_short_strangle", "short strangle @ walls",
+           (NEUTRAL, VOL_DOWN), _wall_short_strangle,
+           "The highest-POP way to express a range and the one that loses most "
+           "when the range fails. UNLIMITED risk both sides.", "wall"),
+    Recipe("pin_butterfly", "butterfly @ max pain", (NEUTRAL,), _pin_butterfly,
+           "Body on the chain's own pin estimate. Max pain is a magnet only "
+           "in the final week, and it is an artefact of OI, not a forecast.",
+           "wall"),
+    Recipe("wall_jade_lizard", "jade lizard @ walls", (NEUTRAL, BULL, VOL_DOWN),
+           _wall_jade_lizard,
+           "Short put at support, short call spread at resistance — no upside "
+           "risk when the credit exceeds the call-spread width.", "wall"),
     Recipe("box", "box spread", (NEUTRAL,), _box,
            "Pure arbitrage check: fair value = strike width. A price far from "
            "that is a data error far more often than free money.", "arb"),

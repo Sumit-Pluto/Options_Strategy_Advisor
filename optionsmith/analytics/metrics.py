@@ -62,6 +62,27 @@ class ChainMetrics:
 
 
 
+def call_wall(chain: Chain, min_oi: int = 1) -> float | None:
+    """Strike carrying the most CALL open interest — the market's own read of
+    where upside supply sits. Only strikes ABOVE spot qualify: a call wall
+    below spot is deep-ITM inventory, not resistance, and anchoring a short
+    call there would write it in the money."""
+    above = [q for q in chain.calls() if q.strike > chain.spot and q.oi >= min_oi]
+    return max(above, key=lambda q: q.oi).strike if above else None
+
+
+def put_wall(chain: Chain, min_oi: int = 1) -> float | None:
+    """Strike carrying the most PUT open interest — support. Below spot only,
+    for the mirror of the reason in `call_wall`."""
+    below = [q for q in chain.puts() if q.strike < chain.spot and q.oi >= min_oi]
+    return max(below, key=lambda q: q.oi).strike if below else None
+
+
+def max_pain(chain: Chain) -> float | None:
+    """Public alias — the pin estimate, which is what a butterfly bets on."""
+    return _max_pain(chain)
+
+
 def liquid_smile_spread(chain: Chain) -> float | None:
     """Max-min IV across the LIQUID contracts, in vol points. None if too thin.
 

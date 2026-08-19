@@ -515,11 +515,84 @@ def test_ranking_honesty():
               True)
 
 
+# ── 12. wall-anchored strike placement ─────────────────────────────────
+def test_wall_anchored():
+    """Strikes placed where the CHAIN says, not at a fixed offset from ATM."""
+    print("\n[12] wall-anchored recipes")
+    from optionsmith.analytics.metrics import call_wall, put_wall
+    from optionsmith.chain.loaders import fill_missing_ivs
+
+    def chain_with_walls(up=7, dn=7):
+        ch = synthetic("W", spot=1400, dte=30, lot_size=250, n_strikes=31, seed=3)
+        ks = ch.strikes
+        i = ks.index(ch.atm)
+        cw, pw = ks[min(i + up, len(ks) - 1)], ks[max(i - dn, 0)]
+        for q in ch.quotes:
+            d = abs(q.strike - ch.spot) / ch.spot
+            base = int(1200 * max(0.15, 1 - 6 * d)) + 150
+            if q.is_call and abs(q.strike - cw) < 1e-6:
+                base = 42000
+            if not q.is_call and abs(q.strike - pw) < 1e-6:
+                base = 38000
+            q.oi, q.prev_oi = base, int(base * 0.9)
+        fill_missing_ivs(ch)
+        return ch, cw, pw
+
+    ch, cw, pw = chain_with_walls()
+    check("call wall detected where planted", call_wall(ch) == cw,
+          f"{call_wall(ch)} vs {cw}")
+    check("put wall detected where planted", put_wall(ch) == pw,
+          f"{put_wall(ch)} vs {pw}")
+
+    # the whole point: the SHORT strikes must sit ON the walls
+    legs = BY_KEY["wall_iron_condor"].build(ch)
+    shorts = sorted(l.strike for l in legs if l.side < 0)
+    check("condor shorts sit ON the walls", shorts == sorted([pw, cw]),
+          f"shorts {shorts}, walls {sorted([pw, cw])}")
+
+    # and unlike the offset version, they MOVE when the walls move
+    ch2, cw2, pw2 = chain_with_walls(up=4, dn=4)
+    s2 = sorted(l.strike for l in BY_KEY["wall_iron_condor"].build(ch2)
+                if l.side < 0)
+    off1 = sorted(l.strike for l in BY_KEY["iron_condor"].build(ch) if l.side < 0)
+    off2 = sorted(l.strike for l in BY_KEY["iron_condor"].build(ch2) if l.side < 0)
+    check("wall condor follows the walls", s2 != shorts, f"{s2} vs {shorts}")
+    check("offset condor ignores them (the gap this closes)", off1 == off2,
+          f"{off1} vs {off2}")
+
+    # far-OTM walls should buy POP — that is the entire trade-off being made
+    a = build_named(ch, "iron_condor")
+    b = build_named(ch, "wall_iron_condor")
+    check("anchoring to far-OTM walls raises POP", b.pop_pct > a.pop_pct,
+          f"wall {b.pop_pct:.1f}% vs offset {a.pop_pct:.1f}%")
+    check("and it is paid for in credit, not free",
+          abs(b.net_premium) < abs(a.net_premium),
+          f"credit {abs(b.net_premium):.2f} vs {abs(a.net_premium):.2f}")
+
+    # a wall on the wrong side of spot must REFUSE, never build inverted
+    bad = synthetic("B", spot=1400, dte=30, lot_size=250, n_strikes=31, seed=3)
+    for q in bad.quotes:
+        q.oi = 5000 if q.strike < bad.spot else 0
+    fill_missing_ivs(bad)
+    check("no call wall above spot is reported as absent",
+          call_wall(bad) is None)
+    check("wall recipe refuses rather than writing an inverted structure",
+          BY_KEY["wall_iron_condor"].build(bad) == [])
+    check("the rest of the catalogue still builds on that chain",
+          len(build_all_safe(bad)) > 10)
+
+
+def build_all_safe(chain):
+    from optionsmith.strategies.library import build_all
+    return build_all(chain)
+
+
 if __name__ == "__main__":
     print("OptionSmith test suite")
     for fn in (test_math, test_payoff, test_pop, test_ev_baseline, test_view,
                test_naming, test_advisor, test_forward, test_edges,
-               test_closed_form, test_ranking_honesty):
+               test_closed_form, test_ranking_honesty,
+               test_wall_anchored):
         fn()
     print(f"\n{'='*46}\n  {PASS} passed, {FAIL} failed\n{'='*46}")
     sys.exit(1 if FAIL else 0)
